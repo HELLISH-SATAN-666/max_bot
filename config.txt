@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def _load_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _load_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
+
+
+def _load_admin_user_ids_from_file(path: str | Path) -> list[int]:
+    file_path = Path(path)
+    if not file_path.exists():
+        return []
+
+    normalized = file_path.read_text(encoding="utf-8").replace(",", " ").split()
+    result: list[int] = []
+    seen: set[int] = set()
+    for item in normalized:
+        try:
+            admin_id = int(item.strip())
+        except ValueError:
+            continue
+        if admin_id in seen:
+            continue
+        seen.add(admin_id)
+        result.append(admin_id)
+
+    return result
+
+
+DEFAULT_TOKEN = ""
+
+TOKEN = os.getenv("MAX_BOT_TOKEN", DEFAULT_TOKEN).strip()
+ADMIN_USER_IDS_FILE_PATH = os.getenv("ADMIN_USER_IDS_FILE_PATH", str(BASE_DIR / "admins.txt"))
+ADMIN_USER_IDS = _load_admin_user_ids_from_file(ADMIN_USER_IDS_FILE_PATH)
+
+CHANNELS_FILE_PATH = os.getenv("CHANNELS_FILE_PATH", str(BASE_DIR / "channels.txt"))
+SUFFIX_FILE_PATH = os.getenv("SUFFIX_FILE_PATH", str(BASE_DIR / "suffix.txt"))
+
+LONG_POLL_LIMIT = _load_int("LONG_POLL_LIMIT", 100)
+LONG_POLL_TIMEOUT_SECONDS = _load_int("LONG_POLL_TIMEOUT_SECONDS", 30)
+LONG_POLL_RETRY_DELAY_SECONDS = _load_int("LONG_POLL_RETRY_DELAY_SECONDS", 5)
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
+LOG_TO_STDOUT = _load_bool("LOG_TO_STDOUT", True)
+LOG_TO_FILE = _load_bool("LOG_TO_FILE", True)
+LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", str(BASE_DIR / "bot.log"))
+LOG_MAX_BYTES = _load_int("LOG_MAX_BYTES", 1_048_576)
+LOG_BACKUP_COUNT = _load_int("LOG_BACKUP_COUNT", 5)
