@@ -25,8 +25,7 @@ from tools import (
     CALLBACK_CHANNELS_CANCEL,
     CALLBACK_CHANNELS_OPEN,
     CALLBACK_CHANNELS_REMOVE,
-    CALLBACK_DRAFT_BACK,
-    CALLBACK_PUBLISH,
+    CALLBACK_MAIN_MENU,
     CALLBACK_SUFFIX_CANCEL,
     CALLBACK_SUFFIX_CLEAR,
     CALLBACK_SUFFIX_OPEN,
@@ -36,16 +35,14 @@ from tools import (
     SuffixStore,
     TEXT_CANCEL_VALUES,
     TEXT_CLEAR_SUFFIX_VALUES,
+    build_ready_to_send_message,
     build_channel_numbers_prompt,
     build_channels_cancel_keyboard,
     build_channels_editor_keyboard,
     build_channels_editor_text,
-    build_draft_keyboard,
-    build_draft_saved_message,
     build_invalid_channel_numbers_message,
     build_no_channels_message,
     build_post_publish_keyboard,
-    build_publish_result_message,
     build_start_message,
     build_status_message,
     build_suffix_cleared_message,
@@ -70,7 +67,6 @@ START_COMMANDS = {"/start", "start", "/help", "help"}
 STATUS_COMMANDS = {"/status", "status", "статус", "/статус"}
 SUFFIX_COMMANDS = {"/suffix", "suffix", "суффикс", "/суффикс"}
 CHANNELS_COMMANDS = {"/channels", "channels", "каналы", "/каналы"}
-PUBLISH_COMMANDS = {"/publish", "publish", "+", "опубликовать", "/опубликовать"}
 CANCEL_COMMANDS = {"/cancel", "cancel", "отмена", "/отмена"}
 
 MODE_SUFFIX = "suffix"
@@ -80,12 +76,8 @@ MODE_CHANNELS_REMOVE = "channels_remove"
 
 @dataclass(slots=True)
 class AdminSession:
-    pending_post: PendingPost | None = None
     awaiting_mode: str | None = None
     channel_snapshot_ids: list[int] = field(default_factory=list)
-
-    def has_draft(self) -> bool:
-        return self.pending_post is not None
 
 
 def configure_logging() -> None:
@@ -130,8 +122,6 @@ def get_or_create_session(
 
 
 def current_menu_keyboard(session: AdminSession) -> list[dict]:
-    if session.has_draft():
-        return build_draft_keyboard()
     return build_suffix_only_keyboard()
 
 
@@ -386,66 +376,6 @@ def apply_suffix_input(
     )
 
 
-def publish_current_draft(
-    client: MaxApiClient,
-    admin_id: int,
-    session: AdminSession,
-    suffix_store: SuffixStore,
-    channel_store: ChannelStore,
-) -> None:
-    draft = session.pending_post
-    if draft is None:
-        LOGGER.info("Admin_id=%s attempted to publish without draft", admin_id)
-        send_admin_message(
-            client,
-            admin_id,
-            "Черновик отсутствует. Сначала отправьте новое сообщение.",
-            attachments=current_menu_keyboard(session),
-        )
-        return
-
-    channels = fetch_admin_channels(client)
-    available_ids = {channel.chat_id for channel in channels}
-    channel_store.initialize(available_ids)
-    selected_ids = channel_store.load_valid(available_ids)
-    selected_channels = [
-        channel for channel in channels if channel.chat_id in selected_ids
-    ]
-
-    if not selected_channels:
-        LOGGER.info("Admin_id=%s attempted to publish without selected channels", admin_id)
-        send_admin_message(
-            client,
-            admin_id,
-            "Нет выбранных каналов. Откройте список каналов и добавьте нужные.",
-            attachments=build_draft_keyboard(),
-        )
-        return
-
-    success_lines, error_lines = publish_to_channels(
-        client=client,
-        channels=selected_channels,
-        draft=draft,
-        suffix=suffix_store.load(),
-    )
-
-    if success_lines:
-        session.pending_post = None
-
-    LOGGER.info(
-        "Publish request by admin_id=%s finished: success=%s error=%s",
-        admin_id,
-        len(success_lines),
-        len(error_lines),
-    )
-    send_admin_message(
-        client,
-        admin_id,
-        build_publish_result_message(success_lines, error_lines),
-        attachments=build_post_publish_keyboard() if success_lines else current_menu_keyboard(session),
-    )
-
-
 def handle_callback(
     client: MaxApiClient,
     admin_id: int,
@@ -492,18 +422,15 @@ def handle_callback(
         open_channels_editor(client, admin_id, session, channel_store)
         return
 
-    if payload == CALLBACK_DRAFT_BACK:
-        acknowledge_callback(client, callback_id, notification="Возвращаю к черновику.")
+    if payload == CALLBACK_MAIN_MENU:
+        acknowledge_callback(client, callback_id, notification="Возвращаю к рассылке.")
         session.awaiting_mode = None
-        if session.pending_post is None:
-            send_start_message(client, admin_id)
-        else:
-            send_admin_message(
-                client,
-                admin_id,
-                build_draft_saved_message(session.pending_post, suffix_store.load()),
-                attachments=build_draft_keyboard(),
-            )
+        send_admin_message(
+            client,
+            admin_id,
+            build_ready_to_send_message(suffix_store.load()),
+            attachments=build_post_publish_keyboard(),
+        )
         return
 
     if payload == CALLBACK_CHANNELS_ADD:
@@ -540,11 +467,6 @@ def handle_callback(
         )
         return
 
-    if payload == CALLBACK_PUBLISH:
-        acknowledge_callback(client, callback_id, notification="Публикую сообщение.")
-        publish_current_draft(client, admin_id, session, suffix_store, channel_store)
-        return
-
     acknowledge_callback(client, callback_id)
 
 
@@ -577,7 +499,6 @@ def handle_command(
             client,
             admin_id,
             build_status_message(
-                draft=session.pending_post,
                 suffix=suffix_store.load(),
                 selected_channels=selected_channels,
                 available_channels_count=len(channels),
@@ -595,10 +516,6 @@ def handle_command(
         open_channels_editor(client, admin_id, session, channel_store)
         return True
 
-    if normalized in PUBLISH_COMMANDS:
-        publish_current_draft(client, admin_id, session, suffix_store, channel_store)
-        return True
-
     if normalized in CANCEL_COMMANDS:
         if session.awaiting_mode is not None:
             session.awaiting_mode = None
@@ -610,20 +527,10 @@ def handle_command(
             )
             return True
 
-        if session.pending_post is None:
-            send_admin_message(
-                client,
-                admin_id,
-                "Черновик отсутствует.",
-                attachments=current_menu_keyboard(session),
-            )
-            return True
-
-        session.pending_post = None
         send_admin_message(
             client,
             admin_id,
-            "Черновик удалён.",
+            "Сейчас нечего отменять.",
             attachments=current_menu_keyboard(session),
         )
         return True
@@ -667,8 +574,8 @@ def handle_admin_message(
         return
 
     attachments = extract_image_attachments(message)
-    new_draft = PendingPost(text=text, attachments=attachments)
-    if new_draft.is_empty():
+    post = PendingPost(text=text, attachments=attachments)
+    if post.is_empty():
         send_admin_message(
             client,
             admin_id,
@@ -677,18 +584,48 @@ def handle_admin_message(
         )
         return
 
-    session.pending_post = new_draft
+    channels = fetch_admin_channels(client)
+    available_ids = {channel.chat_id for channel in channels}
+    channel_store.initialize(available_ids)
+    selected_ids = channel_store.load_valid(available_ids)
+    selected_channels = [
+        channel for channel in channels if channel.chat_id in selected_ids
+    ]
+
+    if not selected_channels:
+        LOGGER.info("Admin_id=%s attempted immediate publish without selected channels", admin_id)
+        send_admin_message(
+            client,
+            admin_id,
+            "Нет выбранных каналов. Откройте список каналов и добавьте нужные.",
+            attachments=build_post_publish_keyboard(),
+        )
+        return
+
     LOGGER.info(
-        "Saved draft for admin_id=%s text_len=%s images=%s",
+        "Immediate publish for admin_id=%s text_len=%s images=%s channels=%s",
         admin_id,
-        len(new_draft.text),
-        len(new_draft.attachments),
+        len(post.text),
+        len(post.attachments),
+        len(selected_channels),
+    )
+    success_lines, error_lines = publish_to_channels(
+        client=client,
+        channels=selected_channels,
+        draft=post,
+        suffix=suffix_store.load(),
+    )
+    LOGGER.info(
+        "Immediate publish by admin_id=%s finished: success=%s error=%s",
+        admin_id,
+        len(success_lines),
+        len(error_lines),
     )
     send_admin_message(
         client,
         admin_id,
-        build_draft_saved_message(new_draft, suffix_store.load()),
-        attachments=build_draft_keyboard(),
+        build_publish_result_message(success_lines, error_lines),
+        attachments=build_post_publish_keyboard(),
     )
 
 

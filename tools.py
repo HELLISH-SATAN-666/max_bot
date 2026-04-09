@@ -20,8 +20,7 @@ CALLBACK_CHANNELS_OPEN = "channels:open"
 CALLBACK_CHANNELS_ADD = "channels:add"
 CALLBACK_CHANNELS_REMOVE = "channels:remove"
 CALLBACK_CHANNELS_CANCEL = "channels:cancel"
-CALLBACK_DRAFT_BACK = "draft:back"
-CALLBACK_PUBLISH = "draft:publish"
+CALLBACK_MAIN_MENU = "menu:open"
 
 TEXT_CANCEL_VALUES = {"cancel", "/cancel", "отмена", "/отмена"}
 TEXT_CLEAR_SUFFIX_VALUES = {
@@ -389,24 +388,6 @@ def build_suffix_only_keyboard() -> list[dict[str, Any]]:
     ]
 
 
-def build_draft_keyboard() -> list[dict[str, Any]]:
-    return [
-        inline_keyboard(
-            [
-                [button_callback("Опубликовать", CALLBACK_PUBLISH, intent="positive")],
-                [button_callback("Суффикс изменить", CALLBACK_SUFFIX_OPEN, intent="default")],
-                [
-                    button_callback(
-                        "Изменить список каналов",
-                        CALLBACK_CHANNELS_OPEN,
-                        intent="default",
-                    )
-                ],
-            ]
-        )
-    ]
-
-
 def build_post_publish_keyboard() -> list[dict[str, Any]]:
     return [
         inline_keyboard(
@@ -443,7 +424,7 @@ def build_channels_editor_keyboard() -> list[dict[str, Any]]:
                     button_callback("Добавить канал", CALLBACK_CHANNELS_ADD, intent="positive"),
                     button_callback("Удалить канал", CALLBACK_CHANNELS_REMOVE, intent="negative"),
                 ],
-                [button_callback("К черновику", CALLBACK_DRAFT_BACK, intent="default")],
+                [button_callback("К рассылке", CALLBACK_MAIN_MENU, intent="default")],
             ]
         )
     ]
@@ -482,13 +463,11 @@ def build_suffix_cleared_message() -> str:
     return "Суффикс очищен."
 
 
-def build_draft_saved_message(draft: PendingPost, suffix: str) -> str:
+def build_ready_to_send_message(suffix: str) -> str:
     suffix_preview = suffix if suffix else "<пусто>"
     return (
-        "Сообщение сохранено как черновик.\n"
-        f"Текст: {draft.preview()}\n"
-        f"Картинок: {len(draft.attachments)}\n"
-        f"Суффикс: {suffix_preview}"
+        "Отправьте сообщение с текстом и картинками.\n"
+        f"Текущий суффикс: {suffix_preview}"
     )
 
 
@@ -525,7 +504,6 @@ def build_no_channels_message() -> str:
 
 
 def build_status_message(
-    draft: PendingPost | None,
     suffix: str,
     selected_channels: list[ChannelTarget],
     available_channels_count: int,
@@ -533,20 +511,9 @@ def build_status_message(
     suffix_preview = suffix if suffix else "<пусто>"
     selected_preview = ", ".join(channel.title for channel in selected_channels) or "<нет>"
 
-    if draft is None:
-        return (
-            "Статус:\n"
-            "Черновик: отсутствует\n"
-            f"Суффикс: {suffix_preview}\n"
-            f"Каналы: {len(selected_channels)} из {available_channels_count}\n"
-            f"Выбрано: {selected_preview}"
-        )
-
     return (
         "Статус:\n"
-        "Черновик: сохранён\n"
-        f"Текст: {draft.preview()}\n"
-        f"Картинок: {len(draft.attachments)}\n"
+        "Режим: мгновенная рассылка\n"
         f"Суффикс: {suffix_preview}\n"
         f"Каналы: {len(selected_channels)} из {available_channels_count}\n"
         f"Выбрано: {selected_preview}"
